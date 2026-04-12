@@ -16,11 +16,7 @@
   <meta name="twitter:title" content="Bento Roadmap">
   <meta name="twitter:description" content="Local-first bento grid roadmap for product managers.">
   <meta name="twitter:image" content="https://bentoroadmap.com/bentoroadmap-dark.svg">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400&display=swap" media="print" onload="this.media='all'">
-  <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400&display=swap"></noscript>
-  <style>
+<style>
     :root {
       --bg: #f8f8f7;
       --card: #ffffff;
@@ -510,6 +506,55 @@
     .gh:hover span { opacity: 0.5; }
 
 
+    /* ─── Filter dropdown ─── */
+    .filter-wrap { position: relative; display: inline-flex; align-items: baseline; }
+
+    .filter-btn.active { color: var(--text); }
+
+    .filter-dropdown {
+      position: fixed;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(26,26,25,.12);
+      padding: 14px 16px;
+      min-width: 200px;
+      max-width: 280px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .filter-section { display: flex; flex-direction: column; gap: 6px; }
+
+    .filter-label {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--faint);
+    }
+
+    .filter-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+
+    .filter-chip {
+      font-size: 11px;
+      font-family: inherit;
+      color: var(--muted);
+      background: var(--bg);
+      border: 1px solid var(--border-faint);
+      border-radius: 6px;
+      padding: 2px 8px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+
+    .filter-chip:hover { border-color: var(--border); color: var(--text); }
+
+    .filter-chip.on { background: var(--text); color: var(--card); border-color: var(--text); }
+
     /* ─── Responsive ─── */
     @media (max-width: 640px) {
       :root { --row-h: 100px; --gap: 8px; }
@@ -827,6 +872,93 @@
     document.addEventListener('mouseup', onUp);
   }
 
+  // ─── Filter state ─────────────────────────────────────────────────────────
+  const activeFilters = { periods: new Set(), dates: new Set(), statuses: new Set(), tags: new Set() };
+
+  function hasActiveFilters() {
+    return Object.values(activeFilters).some(s => s.size > 0);
+  }
+
+  function tileMatchesFilters(tile, periodName, periodDate) {
+    const { periods, dates, statuses, tags } = activeFilters;
+    if (periods.size && !periods.has(periodName)) return false;
+    if (dates.size && !dates.has(periodDate || '')) return false;
+    if (statuses.size && !statuses.has(tile.status)) return false;
+    if (tags.size && !tags.has(tile.tag || '')) return false;
+    return true;
+  }
+
+  function collectFilterValues() {
+    const result = { periods: new Set(), dates: new Set(), statuses: new Set(), tags: new Set() };
+    for (const p of state.periods) {
+      result.periods.add(p.name);
+      if (p.date) result.dates.add(p.date);
+      for (const t of p.tiles) {
+        result.statuses.add(t.status);
+        if (t.tag) result.tags.add(t.tag);
+      }
+    }
+    return result;
+  }
+
+  function openFilterDropdown(btnEl) {
+    const existing = document.querySelector('.filter-dropdown');
+    if (existing) return;
+
+    const vals = collectFilterValues();
+    const dropdown = el('div', 'filter-dropdown');
+
+    const sections = [
+      { key: 'periods',  label: 'Period', values: vals.periods  },
+      { key: 'dates',    label: 'Date',   values: vals.dates    },
+      { key: 'statuses', label: 'Status', values: vals.statuses },
+      { key: 'tags',     label: 'Tag',    values: vals.tags     },
+    ];
+
+    for (const { key, label, values } of sections) {
+      if (!values.size) continue;
+      const sec = el('div', 'filter-section');
+      const lbl = el('div', 'filter-label'); lbl.textContent = label;
+      const chips = el('div', 'filter-chips');
+      for (const v of values) {
+        const chip = el('button', 'filter-chip' + (activeFilters[key].has(v) ? ' on' : ''));
+        chip.textContent = v;
+        chip.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (activeFilters[key].has(v)) activeFilters[key].delete(v);
+          else activeFilters[key].add(v);
+          chip.classList.toggle('on', activeFilters[key].has(v));
+          syncFilterBtn(btnEl);
+          render();
+        });
+        chips.appendChild(chip);
+      }
+      sec.append(lbl, chips);
+      dropdown.appendChild(sec);
+    }
+
+    document.body.appendChild(dropdown);
+
+    // Position below the button
+    const rect = btnEl.getBoundingClientRect();
+    dropdown.style.top = (rect.bottom + 8) + 'px';
+    dropdown.style.right = (window.innerWidth - rect.right) + 'px';
+
+    function onOutside(e) {
+      if (!dropdown.contains(e.target) && !e.target.closest('.filter-btn')) {
+        dropdown.remove();
+        document.removeEventListener('click', onOutside);
+      }
+    }
+    setTimeout(() => document.addEventListener('click', onOutside), 0);
+  }
+
+  function syncFilterBtn(btnEl) {
+    const total = Object.values(activeFilters).reduce((s, set) => s + set.size, 0);
+    btnEl.textContent = total > 0 ? `filter (${total})` : 'filter';
+    btnEl.classList.toggle('active', total > 0);
+  }
+
   // ─── Animated render (FLIP) ───────────────────────────────────────────────
   function animatedRender(ms = 220) {
     // Cancel any running FLIP so snapshot is at true rendered position
@@ -889,21 +1021,39 @@
     makeEditable(h1, { onBlur: (t) => { state.title = t || 'Untitled'; saveState(); } });
 
     const actions = el('div', 'actions');
+
+    const filterWrap = el('div', 'filter-wrap');
+    const filterA = el('a', 'filter-btn' + (hasActiveFilters() ? ' active' : ''));
+    const total = Object.values(activeFilters).reduce((s, set) => s + set.size, 0);
+    filterA.textContent = total > 0 ? `filter (${total})` : 'filter';
+    filterA.setAttribute('role', 'button'); filterA.setAttribute('tabindex', '0');
+    filterA.addEventListener('click', (e) => { e.stopPropagation(); openFilterDropdown(filterA); });
+    filterA.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); filterA.click(); } });
+    filterWrap.appendChild(filterA);
+
     const importA = el('a'); importA.textContent = 'import'; importA.setAttribute('role', 'button'); importA.setAttribute('tabindex', '0'); importA.addEventListener('click', importData); importA.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); importData(); } });
     const exportA = el('a'); exportA.textContent = 'export'; exportA.setAttribute('role', 'button'); exportA.setAttribute('tabindex', '0'); exportA.addEventListener('click', exportData); exportA.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); exportData(); } });
     const addA = el('a'); addA.textContent = '+ month'; addA.setAttribute('role', 'button'); addA.setAttribute('tabindex', '0'); addA.addEventListener('click', addPeriod); addA.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addPeriod(); } });
-    actions.append(importA, exportA, addA);
+    actions.append(filterWrap, importA, exportA, addA);
     header.append(h1, actions);
     app.appendChild(header);
 
     // Periods
-    state.periods.forEach((period, si) => app.appendChild(renderPeriod(period, si)));
+    state.periods.forEach((period, si) => {
+      const sec = renderPeriod(period, si);
+      if (sec) app.appendChild(sec);
+    });
 
     // Check description overflow after paint (double rAF = after browser has painted)
     requestAnimationFrame(checkDescriptionOverflow);
   }
 
   function renderPeriod(period, si) {
+    const visibleTiles = hasActiveFilters()
+      ? period.tiles.filter(t => tileMatchesFilters(t, period.name, period.date))
+      : period.tiles;
+    if (hasActiveFilters() && visibleTiles.length === 0) return null;
+
     const sec = el('section', 'period');
 
     const head = el('div', 'period-head');
@@ -938,13 +1088,13 @@
     const g = el('div', 'g');
     g.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 
-    const { placements, ghosts } = layoutGrid(period.tiles, cols);
+    const { placements, ghosts } = layoutGrid(visibleTiles, cols);
 
     for (const p of placements) {
       g.appendChild(renderCard(p.tile, period, si, p));
     }
 
-    for (const gh of ghosts) {
+    for (const gh of (hasActiveFilters() ? [] : ghosts)) {
       const ghostEl = el('div', 'gh');
       ghostEl.style.gridColumn = `${gh.col} / span 1`;
       ghostEl.style.gridRow = `${gh.row} / span 1`;
