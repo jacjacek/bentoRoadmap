@@ -133,12 +133,34 @@
       cursor: pointer;
       opacity: 0;
       transition: opacity 0.15s, color 0.15s;
-      margin-left: auto;
+      margin-left: 8px;
       user-select: none;
     }
 
     .period-head:hover .period-del { opacity: 1; }
     .period-del:hover { color: #d55; }
+
+    .period-archive {
+      font-size: 11px;
+      color: var(--faint);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s;
+      margin-left: auto;
+      user-select: none;
+    }
+
+    .period-head:hover .period-archive { opacity: 1; }
+    .period-archive:hover { color: var(--muted); }
+
+    .period-archived-badge {
+      font-size: 9px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--faint);
+      font-family: 'JetBrains Mono', monospace;
+    }
 
     /* ─── Grid ─── */
     .g {
@@ -484,7 +506,7 @@
 
     /* ─── Ghost tile ─── */
     .gh {
-      border: 1px dashed var(--border-faint);
+      border: 1px dashed transparent;
       border-radius: var(--radius);
       display: flex;
       align-items: center;
@@ -496,14 +518,14 @@
     .gh span {
       font-size: 16px;
       color: var(--muted);
-      opacity: 0.35;
+      opacity: 0;
       font-weight: 300;
       transition: opacity 0.15s;
       user-select: none;
     }
 
     .gh:hover { border-color: var(--subtle); background: rgba(255,255,255,.5); }
-    .gh:hover span { opacity: 0.5; }
+    .gh:hover span { opacity: 0.6; }
 
 
     /* ─── Filter dropdown ─── */
@@ -518,8 +540,7 @@
       border-radius: 10px;
       box-shadow: 0 8px 24px rgba(26,26,25,.12);
       padding: 14px 16px;
-      min-width: 200px;
-      max-width: 280px;
+      width: 280px;
       z-index: 1000;
       display: flex;
       flex-direction: column;
@@ -599,6 +620,20 @@
     html[data-theme="dark"] .gh:hover { background: rgba(255,255,255,.03); }
     html[data-theme="dark"] .modal-close:hover { background: var(--bg); }
     html[data-theme="dark"] .del-btn:hover { background: rgba(213,85,85,.12); }
+
+    /* ─── Add period ─── */
+    .add-period-btn {
+      display: block;
+      margin-top: 20px;
+      font-size: 12px;
+      color: var(--faint);
+      text-decoration: none;
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s;
+    }
+
+    .add-period-btn:hover { color: var(--text); }
 
     /* ─── Theme toggle ─── */
     .theme-toggle {
@@ -958,6 +993,7 @@
 
   // ─── Filter state ─────────────────────────────────────────────────────────
   const activeFilters = { periods: new Set(), dates: new Set(), statuses: new Set(), tags: new Set() };
+  let showArchived = false;
 
   function hasActiveFilters() {
     return Object.values(activeFilters).some(s => s.size > 0);
@@ -972,9 +1008,19 @@
     return true;
   }
 
+  function pruneActiveFilters() {
+    const valid = collectFilterValues();
+    for (const key of Object.keys(activeFilters)) {
+      for (const v of [...activeFilters[key]]) {
+        if (!valid[key].has(v)) activeFilters[key].delete(v);
+      }
+    }
+  }
+
   function collectFilterValues() {
     const result = { periods: new Set(), dates: new Set(), statuses: new Set(), tags: new Set() };
     for (const p of state.periods) {
+      if (p.archived && !showArchived) continue;
       result.periods.add(p.name);
       if (p.date) result.dates.add(p.date);
       for (const t of p.tiles) {
@@ -987,10 +1033,24 @@
 
   function openFilterDropdown(btnEl) {
     const existing = document.querySelector('.filter-dropdown');
-    if (existing) return;
+    if (existing) { existing.remove(); return; }
 
     const vals = collectFilterValues();
     const dropdown = el('div', 'filter-dropdown');
+
+    // Archive toggle — first, no label
+    const archChip = el('button', 'filter-chip' + (showArchived ? ' on' : ''));
+    archChip.textContent = 'show archived periods';
+    archChip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showArchived = !showArchived;
+      if (!showArchived) pruneActiveFilters();
+      dropdown.remove();
+      render();
+      const newFilterBtn = document.querySelector('.filter-btn');
+      if (newFilterBtn) openFilterDropdown(newFilterBtn);
+    });
+    dropdown.appendChild(archChip);
 
     const sections = [
       { key: 'periods',  label: 'Period', values: vals.periods  },
@@ -1117,12 +1177,11 @@
 
     const importA = el('a'); importA.textContent = 'import'; importA.setAttribute('role', 'button'); importA.setAttribute('tabindex', '0'); importA.addEventListener('click', importData); importA.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); importData(); } });
     const exportA = el('a'); exportA.textContent = 'export'; exportA.setAttribute('role', 'button'); exportA.setAttribute('tabindex', '0'); exportA.addEventListener('click', exportData); exportA.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); exportData(); } });
-    const addA = el('a'); addA.textContent = '+ month'; addA.setAttribute('role', 'button'); addA.setAttribute('tabindex', '0'); addA.addEventListener('click', addPeriod); addA.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addPeriod(); } });
     const themeBtn = el('button', 'theme-toggle');
     themeBtn.textContent = effectiveTheme() === 'dark' ? '☀' : '☾';
     themeBtn.setAttribute('aria-label', 'Toggle theme');
     themeBtn.addEventListener('click', toggleTheme);
-    actions.append(filterWrap, importA, exportA, addA, themeBtn);
+    actions.append(filterWrap, importA, exportA, themeBtn);
     header.append(h1, actions);
     app.appendChild(header);
 
@@ -1132,17 +1191,28 @@
       if (sec) app.appendChild(sec);
     });
 
+    // Add period button at the bottom
+    const addPeriodBtn = el('a', 'add-period-btn');
+    addPeriodBtn.textContent = '+ period';
+    addPeriodBtn.setAttribute('role', 'button');
+    addPeriodBtn.setAttribute('tabindex', '0');
+    addPeriodBtn.addEventListener('click', addPeriod);
+    addPeriodBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); addPeriod(); } });
+    app.appendChild(addPeriodBtn);
+
     // Check description overflow after paint (double rAF = after browser has painted)
     requestAnimationFrame(checkDescriptionOverflow);
   }
 
   function renderPeriod(period, si) {
+    if (period.archived && !showArchived) return null;
+
     const visibleTiles = hasActiveFilters()
       ? period.tiles.filter(t => tileMatchesFilters(t, period.name, period.date))
       : period.tiles;
     if (hasActiveFilters() && visibleTiles.length === 0) return null;
 
-    const sec = el('section', 'period');
+    const sec = el('section', 'period' + (period.archived ? ' archived' : ''));
 
     const head = el('div', 'period-head');
 
@@ -1155,6 +1225,18 @@
     date.textContent = period.date || '';
     date.setAttribute('aria-label', 'Period date');
     makeEditable(date, { onBlur: (t) => { period.date = t; saveState(); } });
+
+    const arch = el('span', 'period-archive');
+    arch.textContent = period.archived ? 'unarchive' : 'archive';
+    arch.title = period.archived ? 'Unarchive period' : 'Archive period';
+    arch.setAttribute('role', 'button');
+    arch.setAttribute('aria-label', period.archived ? `Unarchive ${period.name}` : `Archive ${period.name}`);
+    arch.setAttribute('tabindex', '0');
+    arch.addEventListener('click', () => {
+      period.archived = !period.archived;
+      saveState(); render();
+    });
+    arch.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); arch.click(); } });
 
     const del = el('span', 'period-del');
     del.textContent = '×';
@@ -1169,7 +1251,13 @@
     });
     del.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); del.click(); } });
 
-    head.append(name, date, del);
+    if (period.archived) {
+      const badge = el('span', 'period-archived-badge');
+      badge.textContent = 'archived';
+      head.append(name, date, badge, arch, del);
+    } else {
+      head.append(name, date, arch, del);
+    }
     sec.appendChild(head);
 
     // Grid
@@ -1182,7 +1270,7 @@
       g.appendChild(renderCard(p.tile, period, si, p));
     }
 
-    for (const gh of (hasActiveFilters() ? [] : ghosts)) {
+    for (const gh of ghosts) {
       const ghostEl = el('div', 'gh');
       ghostEl.style.gridColumn = `${gh.col} / span 1`;
       ghostEl.style.gridRow = `${gh.row} / span 1`;
