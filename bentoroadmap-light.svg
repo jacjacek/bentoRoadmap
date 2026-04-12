@@ -1,10 +1,8 @@
 <svg width="500" height="500" viewBox="0 0 500 500" xmlns="http://www.w3.org/2000/svg">
+<rect x="8" y="8" width="484" height="484" rx="108" fill="none" stroke="#d5d5d5" stroke-width="16"/>
 <g fill="#d5d5d5">
-<rect x="0" y="0" width="175" height="175" rx="40"/>
-<rect x="220" y="0" width="280" height="175" rx="40"/>
-<rect x="0" y="220" width="290" height="280" rx="40"/>
-<rect x="335" y="220" width="165" height="110" rx="40"/>
-<rect x="335" y="375" width="165" height="125" rx="40"/>
+  <rect x="60" y="60" width="380" height="170" rx="26"/>
+  <rect x="60" y="270" width="170" height="170" rx="26"/>
+  <rect x="270" y="270" width="170" height="170" rx="26"/>
 </g>
-<polyline points="95,295 195,360 95,425" fill="none" stroke="#2a2a2a" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
