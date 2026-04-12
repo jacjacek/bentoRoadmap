@@ -26,6 +26,7 @@
       --card: #ffffff;
       --border: #e8e8e6;
       --border-faint: #f0f0ee;
+      --focus-bg: #f7f7f6;
       --text: #1a1a19;
       --muted: #6b6b6b;
       --faint: #999894;
@@ -71,7 +72,7 @@
     h1:focus {
       padding: 2px 5px;
       margin: -2px -5px;
-      outline: 1.5px solid var(--subtle);
+      background: var(--focus-bg);
     }
 
     .actions {
@@ -112,7 +113,7 @@
     .period-name:focus {
       padding: 1px 4px;
       margin: -1px -4px;
-      outline: 1.5px solid var(--subtle);
+      background: var(--focus-bg);
     }
 
     .period-date {
@@ -127,7 +128,7 @@
     .period-date:focus {
       padding: 1px 4px;
       margin: -1px -4px;
-      outline: 1.5px solid var(--subtle);
+      background: var(--focus-bg);
     }
 
     .period-del {
@@ -182,16 +183,20 @@
     }
 
     .st::before {
-      content: '●';
-      margin-right: 5px;
-      font-size: 11px;
-      vertical-align: middle;
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      flex-shrink: 0;
     }
 
     .in-progress .st::before { color: #4a8ef5; }
     .done .st::before        { color: #52b788; }
     .blocked .st::before     { color: #e07070; }
-    .c:not(.in-progress):not(.done):not(.blocked) .st::before { color: var(--faint); }
+    .c:not(.in-progress):not(.done):not(.blocked) .st::before,
+    .modal:not(.in-progress):not(.done):not(.blocked) .st::before { color: var(--faint); }
 
     /* ─── Drag states ─── */
     .c.dragging {
@@ -258,7 +263,7 @@
     .c.editing .t {
       padding: 2px 5px;
       margin: -2px -5px;
-      outline: 1.5px solid var(--subtle);
+      background: var(--focus-bg);
     }
 
     /* Remove clamp while editing description */
@@ -268,7 +273,7 @@
       overflow: visible;
       padding: 2px 5px;
       margin: 2px -5px;
-      outline: 1px solid var(--border-faint);
+      background: var(--focus-bg);
     }
 
     /* "more" tertiary button */
@@ -349,14 +354,14 @@
       border-radius: 4px;
       margin-bottom: 14px;
       display: block;
+      padding: 3px 6px;
+      margin-left: -6px;
       padding-right: 28px;
       line-height: 1.3;
     }
 
     .modal-title:focus {
-      padding: 3px 6px;
-      margin: -3px -6px;
-      outline: 1.5px solid var(--subtle);
+      background: var(--focus-bg);
     }
 
     .modal-desc {
@@ -369,12 +374,12 @@
       display: block;
       white-space: pre-wrap;
       word-break: break-word;
+      padding: 4px 6px;
+      margin-left: -6px;
     }
 
     .modal-desc:focus {
-      padding: 4px 6px;
-      margin: -4px -6px;
-      outline: 1px solid var(--border-faint);
+      background: var(--focus-bg);
     }
 
     .modal-desc:empty::before {
@@ -410,6 +415,9 @@
       cursor: pointer;
       user-select: none;
       transition: color 0.15s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .st:hover { color: var(--text); }
@@ -431,7 +439,7 @@
     .tg:focus {
       padding: 1px 3px;
       margin-right: -3px;
-      outline: 1px solid var(--border);
+      background: var(--focus-bg);
     }
 
     .tg:empty::before {
@@ -694,7 +702,7 @@
     overlay.setAttribute('aria-modal', 'true');
     overlay.setAttribute('aria-labelledby', 'modal-title-' + tile.id);
 
-    const modal = el('div', 'modal');
+    const modal = el('div', 'modal' + (STATUS_CLS[tile.status] || ''));
 
     const closeBtn = el('button', 'modal-close');
     closeBtn.textContent = '×';
