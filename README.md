@@ -15,6 +15,9 @@ A local-first, single-file product roadmap tool. No backend, no build step, no n
 - **Status cycling** — click the status badge to cycle through Backlog → In progress → Done → Blocked
 - **Tile modal** — click a card to open a full detail view with notes field
 - **Period management** — add, rename, reorder, and delete periods
+- **Period archiving** — archive old periods to declutter the view; reveal them via the filter dropdown
+- **Filtering** — filter tiles by status, tag, or period; filters only show values present in visible periods
+- **Dark mode** — toggle between light and dark theme; preference is saved
 - **Persistent** — data lives in `localStorage`; nothing leaves your browser
 - **Import / Export** — save and load your roadmap as a plain JSON file
 - **Responsive** — adapts from desktop down to mobile
@@ -41,7 +44,11 @@ No server, no installation, no account required.
 | Move tile | Drag and drop |
 | Add period | Click `+ period` in the header |
 | Delete period | Hover period name → click × |
+| Archive period | Hover period name → click `archive` |
 | Open detail | Click anywhere on a card (not a control) |
+| Filter tiles | Click `filter` in the header → pick statuses, tags, or periods |
+| Show archived | Click `filter` → toggle `show archived periods` |
+| Toggle theme | Click ☾/☀ in the header |
 | Export | Click `export` in the header → downloads `roadmap.json` |
 | Import | Click `import` in the header → pick a `.json` file |
 
@@ -80,7 +87,6 @@ Roadmaps are stored as JSON (in `localStorage` and exported files):
 Pull requests are welcome. The entire app is in `index.html` — HTML structure at the bottom, CSS in `<style>`, JS in `<script>`. No bundler, no dependencies beyond two Google Fonts.
 
 Ideas for contributions:
-- Dark mode
 - Tile colors / labels
 - Keyboard shortcuts
 - Multiple roadmap tabs
