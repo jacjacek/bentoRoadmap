@@ -429,6 +429,7 @@
       align-items: center;
       gap: 6px;
       padding-top: 6px;
+      position: relative;
     }
 
     .st {
@@ -534,6 +535,113 @@
     .gh:hover { border-color: var(--subtle); background: rgba(255,255,255,.5); }
     .gh:hover span { opacity: 0.6; }
 
+    /* ─── Task group dots ─── */
+    .task-dots {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      pointer-events: none;
+    }
+
+    .task-dots.dots-above {
+      position: static;
+      transform: none;
+      justify-content: center;
+      margin-top: auto;
+      padding-bottom: 4px;
+    }
+
+    .has-dots-above .f { margin-top: 0; }
+
+    .task-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      border: 1.5px solid var(--subtle);
+      background: transparent;
+      cursor: pointer;
+      pointer-events: auto;
+      transition: background 0.15s, border-color 0.15s, transform 0.15s;
+      flex-shrink: 0;
+    }
+    .task-dot.current {
+      background: var(--muted);
+      border-color: var(--muted);
+      cursor: default;
+    }
+    .task-dot:not(.current):hover {
+      border-color: var(--muted);
+      transform: scale(1.3);
+    }
+
+    /* ─── Link button ─── */
+    .link-btn {
+      position: absolute;
+      top: 6px; right: 26px;
+      width: 18px; height: 18px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--faint);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s, background 0.15s;
+      border-radius: 4px;
+      z-index: 2;
+      user-select: none;
+    }
+    .c:hover .link-btn { opacity: 1; }
+    .link-btn.active   { opacity: 1; color: var(--accent); }
+    .link-btn:hover    { color: var(--muted); background: rgba(100,100,100,.08); }
+
+    /* ─── Link popup ─── */
+    .link-popup {
+      position: fixed;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(26,26,25,.12);
+      width: 220px;
+      max-height: 280px;
+      overflow-y: auto;
+      z-index: 3000;
+      padding: 6px 0;
+    }
+    .link-popup-head {
+      font-size: 9px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--faint);
+      padding: 4px 12px 6px;
+    }
+    .link-popup-period {
+      font-size: 9px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--faint);
+      padding: 6px 12px 3px;
+    }
+    .link-popup-item {
+      padding: 5px 12px;
+      font-size: 12px; color: var(--muted);
+      cursor: pointer;
+      transition: background 0.1s, color 0.1s;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .link-popup-item:hover { background: var(--bg); color: var(--text); }
+    .link-popup-item.remove {
+      color: var(--faint);
+      border-bottom: 1px solid var(--border-faint);
+      margin-bottom: 2px;
+    }
+    .link-popup-item.remove:hover { color: #d55; background: rgba(213,85,85,.06); }
+
+    /* ─── Tile navigate highlight ─── */
+    @keyframes tileHighlight {
+      0%   { box-shadow: 0 0 0 2px var(--accent), 0 0 16px rgba(90,156,246,.25); }
+      70%  { box-shadow: 0 0 0 2px var(--accent); }
+      100% { box-shadow: none; }
+    }
+    .c.tile-flash { animation: tileHighlight 1.2s ease forwards; }
 
     /* ─── Filter dropdown ─── */
     .filter-wrap { position: relative; display: inline-flex; align-items: baseline; }
@@ -602,6 +710,7 @@
       html:not([data-theme="light"]) .c.in-progress:hover { box-shadow: 0 3px 12px rgba(0,0,0,.3); }
       html:not([data-theme="light"]) .modal-overlay { background: rgba(0,0,0,.55); }
       html:not([data-theme="light"]) .filter-dropdown { box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+      html:not([data-theme="light"]) .link-popup { box-shadow: 0 8px 24px rgba(0,0,0,.4); }
       html:not([data-theme="light"]) .gh:hover { background: rgba(255,255,255,.03); }
       html:not([data-theme="light"]) .modal-close:hover { background: var(--bg); }
       html:not([data-theme="light"]) .del-btn:hover { background: rgba(213,85,85,.12); }
@@ -624,6 +733,7 @@
     html[data-theme="dark"] .c.in-progress:hover { box-shadow: 0 3px 12px rgba(0,0,0,.3); }
     html[data-theme="dark"] .modal-overlay { background: rgba(0,0,0,.55); }
     html[data-theme="dark"] .filter-dropdown { box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+    html[data-theme="dark"] .link-popup { box-shadow: 0 8px 24px rgba(0,0,0,.4); }
     html[data-theme="dark"] .gh:hover { background: rgba(255,255,255,.03); }
     html[data-theme="dark"] .modal-close:hover { background: var(--bg); }
     html[data-theme="dark"] .del-btn:hover { background: rgba(213,85,85,.12); }
@@ -1109,6 +1219,142 @@
     btnEl.classList.toggle('active', total > 0);
   }
 
+  // ─── Task groups ───────────────────────────────────────────────────────────
+  let taskGroupsCache = new Map();
+
+  function buildTaskGroups() {
+    const groups = new Map();
+    state.periods.forEach((period, periodIdx) => {
+      period.tiles.forEach(tile => {
+        if (!tile.taskGroupId) return;
+        if (!groups.has(tile.taskGroupId)) groups.set(tile.taskGroupId, []);
+        groups.get(tile.taskGroupId).push({ tile, periodIdx });
+      });
+    });
+    for (const members of groups.values()) {
+      members.sort((a, b) => a.periodIdx - b.periodIdx);
+    }
+    return groups;
+  }
+
+  function renderDots(members, currentIdx) {
+    const row = el('div', 'task-dots');
+    members.forEach((m, i) => {
+      const dot = el('span', 'task-dot' + (i === currentIdx ? ' current' : ''));
+      dot.setAttribute('aria-label', `Part ${i + 1} of ${members.length}`);
+      if (i !== currentIdx) {
+        dot.setAttribute('role', 'button');
+        dot.setAttribute('tabindex', '0');
+        dot.title = m.tile.title || 'Untitled';
+        dot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const target = document.querySelector(`[data-tile="${m.tile.id}"]`);
+          if (!target) return;
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          setTimeout(() => {
+            target.classList.remove('tile-flash');
+            void target.offsetWidth;
+            target.classList.add('tile-flash');
+            setTimeout(() => target.classList.remove('tile-flash'), 1200);
+          }, 300);
+        });
+        addKeyClick(dot);
+      }
+      row.appendChild(dot);
+    });
+    return row;
+  }
+
+  function linkTiles(tileA, tileB) {
+    if (tileA.taskGroupId && tileB.taskGroupId && tileA.taskGroupId !== tileB.taskGroupId) {
+      const old = tileB.taskGroupId;
+      state.periods.forEach(p => p.tiles.forEach(t => { if (t.taskGroupId === old) t.taskGroupId = tileA.taskGroupId; }));
+    } else {
+      const gid = tileA.taskGroupId || tileB.taskGroupId || uid();
+      tileA.taskGroupId = gid;
+      tileB.taskGroupId = gid;
+    }
+  }
+
+  function unlinkTile(tile) {
+    delete tile.taskGroupId;
+    const counts = new Map();
+    state.periods.forEach(p => p.tiles.forEach(t => {
+      if (t.taskGroupId) counts.set(t.taskGroupId, (counts.get(t.taskGroupId) || 0) + 1);
+    }));
+    state.periods.forEach(p => p.tiles.forEach(t => {
+      if (t.taskGroupId && counts.get(t.taskGroupId) === 1) delete t.taskGroupId;
+    }));
+  }
+
+  function openLinkPopup(tile, anchorEl) {
+    const existing = document.querySelector('.link-popup');
+    if (existing) { existing.remove(); return; }
+
+    const popup = el('div', 'link-popup');
+
+    const head = el('div', 'link-popup-head');
+    head.textContent = tile.taskGroupId ? 'Task group' : 'Link to tile';
+    popup.appendChild(head);
+
+    if (tile.taskGroupId) {
+      const removeItem = el('div', 'link-popup-item remove');
+      removeItem.textContent = '× Remove from group';
+      removeItem.addEventListener('click', () => { unlinkTile(tile); saveState(); render(); popup.remove(); });
+      popup.appendChild(removeItem);
+
+      (taskGroupsCache.get(tile.taskGroupId) || []).forEach(m => {
+        if (m.tile.id === tile.id) return;
+        const item = el('div', 'link-popup-item');
+        const period = state.periods[m.periodIdx];
+        item.textContent = (period ? period.name + ' — ' : '') + (m.tile.title || 'Untitled');
+        popup.appendChild(item);
+      });
+    } else {
+      const hasOthers = state.periods.some(p => p.tiles.some(t => t.id !== tile.id));
+      if (!hasOthers) {
+        const empty = el('div', 'link-popup-item');
+        empty.textContent = 'No other tiles';
+        empty.style.color = 'var(--faint)';
+        popup.appendChild(empty);
+      }
+      state.periods.forEach(period => {
+        const others = period.tiles.filter(t => t.id !== tile.id);
+        if (!others.length) return;
+        const pLabel = el('div', 'link-popup-period');
+        pLabel.textContent = period.name;
+        popup.appendChild(pLabel);
+        others.forEach(other => {
+          const item = el('div', 'link-popup-item');
+          item.textContent = other.title || 'Untitled';
+          item.addEventListener('click', () => { linkTiles(tile, other); saveState(); render(); popup.remove(); });
+          popup.appendChild(item);
+        });
+      });
+    }
+
+    document.body.appendChild(popup);
+
+    const rect = anchorEl.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    if (spaceBelow >= 120 || spaceBelow >= spaceAbove) {
+      popup.style.top = (rect.bottom + 6) + 'px';
+    } else {
+      popup.style.top = (rect.top - 6) + 'px';
+      popup.style.transform = 'translateY(-100%)';
+    }
+    popup.style.right = (window.innerWidth - rect.right - 18) + 'px';
+
+    function onOutside(e) {
+      if (!popup.contains(e.target) && !anchorEl.contains(e.target)) {
+        popup.remove();
+        document.removeEventListener('click', onOutside);
+      }
+    }
+    setTimeout(() => document.addEventListener('click', onOutside), 0);
+  }
+
   // ─── Animated render (FLIP) ───────────────────────────────────────────────
   function animatedRender(ms = 220) {
     // Cancel any running FLIP so snapshot is at true rendered position
@@ -1160,6 +1406,7 @@
 
   // ─── Render ────────────────────────────────────────────────────────────────
   function render() {
+    taskGroupsCache = buildTaskGroups();
     const app = document.getElementById('app');
     app.innerHTML = '';
 
@@ -1324,6 +1571,9 @@
   }
 
   function renderCard(tile, period, si, p) {
+    const members = tile.taskGroupId ? taskGroupsCache.get(tile.taskGroupId) : null;
+    const currentIdx = members ? members.findIndex(m => m.tile.id === tile.id) : -1;
+
     const card = el('div', 'c' + (STATUS_CLS[tile.status] || ''));
     card.dataset.tile = tile.id;
     card.dataset.si = si;
@@ -1391,6 +1641,15 @@
     });
     addKeyClick(delB);
 
+    // Link button
+    const linkBtn = el('span', 'link-btn' + (tile.taskGroupId ? ' active' : ''));
+    linkBtn.innerHTML = '<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 3H3a2 2 0 0 0 0 4h1M6 7h1a2 2 0 0 0 0-4H6M3.5 5h3"/></svg>';
+    linkBtn.setAttribute('role', 'button');
+    linkBtn.setAttribute('aria-label', tile.taskGroupId ? 'Manage task group' : 'Link to task group');
+    linkBtn.setAttribute('tabindex', '0');
+    linkBtn.addEventListener('click', (e) => { e.stopPropagation(); openLinkPopup(tile, linkBtn); });
+    addKeyClick(linkBtn);
+
     // Title
     const t = el('span', 't'); t.textContent = tile.title;
     t.setAttribute('aria-label', 'Tile title');
@@ -1448,7 +1707,12 @@
     rh.setAttribute('tabindex', '0');
     rh.addEventListener('mousedown', (e) => startResize(e, tile, card));
 
-    card.append(delB, t, de, moreBtn, f, rh);
+    const dotsEl = members?.length >= 2 ? renderDots(members, currentIdx) : null;
+    if (dotsEl) {
+      if (p.w > 1) f.appendChild(dotsEl);
+      else { dotsEl.classList.add('dots-above'); card.classList.add('has-dots-above'); }
+    }
+    card.append(delB, linkBtn, t, de, moreBtn, ...(dotsEl && p.w === 1 ? [dotsEl] : []), f, rh);
     return card;
   }
 
