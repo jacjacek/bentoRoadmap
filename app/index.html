@@ -177,6 +177,51 @@
       gap: var(--gap);
     }
 
+    /* ─── Gantt view ─── */
+    .gantt-scroll {
+      overflow-x: auto;
+      margin-bottom: 4px;
+      /* keep card hover shadows from being clipped */
+      padding: 4px 4px 12px;
+      margin-left: -4px;
+      margin-right: -4px;
+    }
+
+    .gantt-lane-headers {
+      display: grid;
+      gap: var(--gap);
+      margin-bottom: 14px;
+      min-width: 100%;
+    }
+
+    .gantt-lane-head { min-width: 0; }
+    .gantt-lane-head .period-head { margin-bottom: 0; }
+    .gantt-lane-head.archived { opacity: 0.65; }
+
+    .gantt-grid {
+      display: grid;
+      grid-auto-rows: var(--row-h);
+      gap: var(--gap);
+      position: relative;
+      min-width: 100%;
+    }
+
+    .gantt-lane-sep {
+      pointer-events: none;
+      border-left: 1px dashed var(--border-faint);
+      margin-left: calc(var(--gap) / -2);
+      width: 0;
+    }
+
+    /* Continuous bar spanning multiple periods */
+    .c.gantt-bar {
+      cursor: default;
+    }
+    .c.gantt-bar:active { cursor: default; }
+
+    /* View toggle in header */
+    .view-toggle { font-variant-numeric: tabular-nums; }
+
     /* ─── Card ─── */
     .c {
       background: var(--card);
@@ -842,7 +887,10 @@
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const d = JSON.parse(raw);
-        if (valid(d)) return d;
+        if (valid(d)) {
+          if (d.viewMode !== 'bento' && d.viewMode !== 'gantt') d.viewMode = 'bento';
+          return d;
+        }
       }
     } catch (e) { /* fall through */ }
     return seed();
@@ -854,6 +902,9 @@
 
   function valid(d) {
     if (!d || typeof d.title !== 'string' || !Array.isArray(d.periods)) return false;
+    if (d.viewMode !== undefined && d.viewMode !== 'bento' && d.viewMode !== 'gantt') {
+      d.viewMode = 'bento';
+    }
     return d.periods.every(s =>
       s.id && typeof s.name === 'string' && Array.isArray(s.tiles) &&
       s.tiles.every(t => t.id && typeof t.title === 'string')
@@ -863,6 +914,7 @@
   function seed() {
     return {
       title: 'My Roadmap',
+      viewMode: 'bento',
       periods: [
         {
           id: uid(), name: 'April', date: '2025',
@@ -940,6 +992,126 @@
         if (!grid[r][c]) ghosts.push({ row: r + 1, col: c + 1 });
 
     return { placements, ghosts };
+  }
+
+  // ─── Gantt layout algorithm ────────────────────────────────────────────────
+  // Lays out visible periods as horizontal lanes in a single unified grid.
+  // Each lane has `cols` sub-columns (same as bento). Total grid width is
+  // numLanes * cols. Multi-period task groups become a single rectangular bar:
+  //   - First part is right-aligned within its lane (so the bar can extend right).
+  //   - Last part is left-aligned within its lane (so the bar can extend left).
+  //   - Middle lanes are fully occupied by the bar.
+  //   - Bar height = max rowSpan across all parts.
+  // Singles inside each lane pack with the same algorithm as bento.
+  function layoutGanttGrid(lanes, cols) {
+    const numLanes = lanes.length;
+    const totalCols = numLanes * cols;
+    const grid = [];
+
+    function ensure(n) { while (grid.length < n) grid.push(new Array(totalCols).fill(false)); }
+    function fits(r, c, w, h) {
+      if (c < 0 || c + w > totalCols) return false;
+      ensure(r + h);
+      for (let rr = r; rr < r + h; rr++)
+        for (let cc = c; cc < c + w; cc++)
+          if (grid[rr][cc]) return false;
+      return true;
+    }
+    function mark(r, c, w, h) {
+      ensure(r + h);
+      for (let rr = r; rr < r + h; rr++)
+        for (let cc = c; cc < c + w; cc++)
+          grid[rr][cc] = true;
+    }
+
+    // Build task groups scoped to visible tiles.
+    const groups = new Map();
+    lanes.forEach((lane, laneIdx) => {
+      lane.tiles.forEach(tile => {
+        if (!tile.taskGroupId) return;
+        if (!groups.has(tile.taskGroupId)) groups.set(tile.taskGroupId, []);
+        groups.get(tile.taskGroupId).push({ tile, lane: laneIdx });
+      });
+    });
+    for (const arr of groups.values()) arr.sort((a, b) => a.lane - b.lane);
+
+    // Multi-part groups become bars; single-part "groups" fall through to singles.
+    const bars = [];
+    const placedTiles = new Set();
+    for (const members of groups.values()) {
+      if (members.length < 2) continue;
+      const first = members[0];
+      const last = members[members.length - 1];
+      const w1 = clamp(first.tile.colSpan || 1, 1, cols);
+      const wN = clamp(last.tile.colSpan || 1, 1, cols);
+      const h = members.reduce((m, p) => Math.max(m, clamp(p.tile.rowSpan || 1, 1, 6)), 1);
+      const startCol = first.lane * cols + (cols - w1); // right-aligned in first lane
+      const endCol   = last.lane  * cols + wN;          // extends to left side of last lane + wN
+      const w = endCol - startCol;
+      bars.push({ members, w, h, startCol, firstLane: first.lane, lastLane: last.lane });
+      for (const m of members) placedTiles.add(m.tile.id);
+    }
+
+    // Place wider/taller bars first — they're more constrained.
+    bars.sort((a, b) => (b.w * b.h) - (a.w * a.h));
+
+    const placements = [];
+    const groupPlacements = [];
+
+    for (const bar of bars) {
+      for (let r = 0; ; r++) {
+        if (fits(r, bar.startCol, bar.w, bar.h)) {
+          mark(r, bar.startCol, bar.w, bar.h);
+          groupPlacements.push({
+            members: bar.members,
+            row: r + 1,
+            col: bar.startCol + 1,
+            w: bar.w,
+            h: bar.h,
+            firstLane: bar.firstLane,
+            lastLane: bar.lastLane,
+          });
+          break;
+        }
+      }
+    }
+
+    // Place singles per lane (preserves per-period tile ordering from bento).
+    lanes.forEach((lane, laneIdx) => {
+      const laneStart = laneIdx * cols;
+      for (const tile of lane.tiles) {
+        if (placedTiles.has(tile.id)) continue;
+        const w = clamp(tile.colSpan || 1, 1, cols);
+        const h = clamp(tile.rowSpan || 1, 1, 6);
+        outer: for (let r = 0; ; r++) {
+          ensure(r + 1);
+          for (let c = 0; c <= cols - w; c++) {
+            const absC = laneStart + c;
+            if (fits(r, absC, w, h)) {
+              mark(r, absC, w, h);
+              placements.push({ tile, lane: laneIdx, row: r + 1, col: absC + 1, w, h });
+              break outer;
+            }
+          }
+        }
+      }
+    });
+
+    // Ghost cells (one extra row at the bottom for "+" affordances).
+    const ghosts = [];
+    ensure(grid.length + 1);
+    for (let r = 0; r < grid.length; r++) {
+      for (let laneIdx = 0; laneIdx < numLanes; laneIdx++) {
+        const laneStart = laneIdx * cols;
+        for (let c = 0; c < cols; c++) {
+          if (!grid[r][laneStart + c]) {
+            ghosts.push({ lane: laneIdx, row: r + 1, col: laneStart + c + 1 });
+          }
+        }
+      }
+    }
+
+    return { placements, groupPlacements, ghosts, totalCols, numLanes, totalRows: grid.length };
   }
 
   // ─── Editable helper ───────────────────────────────────────────────────────
@@ -1067,18 +1239,19 @@
 
   // ─── Size picker ───────────────────────────────────────────────────────────
   // ─── Drag resize ───────────────────────────────────────────────────────────
-  function startResize(e, tile, cardEl) {
+  function startResize(e, tile, cardEl, gridCols) {
     e.preventDefault();
     e.stopPropagation();
 
     const gridEl = cardEl.parentElement;
+    const totalCols = gridCols || cols; // grid track count (Gantt uses numLanes*cols)
     const startX = e.clientX;
     const startY = e.clientY;
     const startCols = tile.colSpan || 1;
     const startRows = tile.rowSpan || 1;
 
     // Read cell dimensions from the live grid
-    const cellW = (gridEl.clientWidth - (cols - 1) * GAP) / cols;
+    const cellW = (gridEl.clientWidth - (totalCols - 1) * GAP) / totalCols;
     const cellH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-h')) || 128;
 
     document.body.style.cursor = 'nwse-resize';
@@ -1087,6 +1260,7 @@
     function onMove(ev) {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
+      // colSpan still capped at per-lane cols so a single tile never escapes its lane
       const newCols = clamp(startCols + Math.round(dx / (cellW + GAP)), 1, cols);
       const newRows = clamp(startRows + Math.round(dy / (cellH + GAP)), 1, 6);
       if (newCols !== tile.colSpan || newRows !== tile.rowSpan) {
@@ -1406,11 +1580,11 @@
 
   // ─── Render ────────────────────────────────────────────────────────────────
   function render() {
-    taskGroupsCache = buildTaskGroups();
-    const app = document.getElementById('app');
-    app.innerHTML = '';
+    if (state.viewMode === 'gantt') renderGantt();
+    else renderBento();
+  }
 
-    // Header
+  function renderHeader(app) {
     const header = el('div', 'header');
     const h1 = el('h1');
     h1.textContent = state.title;
@@ -1418,6 +1592,18 @@
     makeEditable(h1, { onBlur: (t) => { state.title = t || 'Untitled'; saveState(); } });
 
     const actions = el('div', 'actions');
+
+    const viewA = el('a', 'view-toggle');
+    viewA.textContent = state.viewMode === 'gantt' ? 'bento' : 'gantt';
+    viewA.title = state.viewMode === 'gantt' ? 'Switch to bento view' : 'Switch to gantt view';
+    viewA.setAttribute('role', 'button'); viewA.setAttribute('tabindex', '0');
+    viewA.setAttribute('aria-label', viewA.title);
+    viewA.addEventListener('click', () => {
+      state.viewMode = state.viewMode === 'gantt' ? 'bento' : 'gantt';
+      saveState();
+      render();
+    });
+    addKeyClick(viewA);
 
     const filterWrap = el('div', 'filter-wrap');
     const filterA = el('a', 'filter-btn' + (hasActiveFilters() ? ' active' : ''));
@@ -1436,9 +1622,17 @@
     themeBtn.addEventListener('click', toggleTheme);
     const infoA = el('a', 'info-link'); infoA.href = 'https://bentoroadmap.com'; infoA.target = '_blank'; infoA.setAttribute('aria-label', 'About Bento Roadmap');
     infoA.innerHTML = 'info<svg width="9" height="9" viewBox="0 0 9 9" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1.5 7.5L7.5 1.5M7.5 1.5H3.5M7.5 1.5V5.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    actions.append(infoA, filterWrap, importA, exportA, themeBtn);
+    actions.append(infoA, viewA, filterWrap, importA, exportA, themeBtn);
     header.append(h1, actions);
     app.appendChild(header);
+  }
+
+  function renderBento() {
+    taskGroupsCache = buildTaskGroups();
+    const app = document.getElementById('app');
+    app.innerHTML = '';
+
+    renderHeader(app);
 
     // Periods
     state.periods.forEach((period, si) => {
@@ -1458,16 +1652,7 @@
     requestAnimationFrame(checkDescriptionOverflow);
   }
 
-  function renderPeriod(period, si) {
-    if (period.archived && !showArchived) return null;
-
-    const visibleTiles = hasActiveFilters()
-      ? period.tiles.filter(t => tileMatchesFilters(t, period.name, period.date))
-      : period.tiles;
-    if (hasActiveFilters() && visibleTiles.length === 0) return null;
-
-    const sec = el('section', 'period' + (period.archived ? ' archived' : ''));
-
+  function buildPeriodHead(period, si) {
     const head = el('div', 'period-head');
 
     const name = el('span', 'period-name');
@@ -1505,7 +1690,69 @@
     const badge = period.archived ? el('span', 'period-archived-badge') : null;
     if (badge) badge.textContent = 'archived';
     head.append(name, date, ...(badge ? [badge] : []), arch, del);
-    sec.appendChild(head);
+    return head;
+  }
+
+  function renderGhost(period, si, gh) {
+    const ghostEl = el('div', 'gh');
+    ghostEl.style.gridColumn = `${gh.col} / span 1`;
+    ghostEl.style.gridRow = `${gh.row} / span 1`;
+    ghostEl.dataset.si = si;
+    ghostEl.dataset.ghost = '1';
+
+    const plus = el('span'); plus.textContent = '+'; plus.setAttribute('aria-hidden', 'true');
+    ghostEl.setAttribute('role', 'button');
+    ghostEl.setAttribute('aria-label', 'Add tile');
+    ghostEl.setAttribute('tabindex', '0');
+    ghostEl.appendChild(plus);
+
+    addKeyClick(ghostEl);
+    ghostEl.addEventListener('click', () => {
+      const t = { id: uid(), colSpan: 1, rowSpan: 1, title: 'New task', description: '', status: 'Backlog', tag: '' };
+      period.tiles.push(t);
+      saveState(); animatedRender(200);
+      setTimeout(() => {
+        const titleEl = document.querySelector(`[data-tile="${t.id}"] .t`);
+        if (titleEl) { titleEl.focus(); selectAll(titleEl); }
+      }, 30);
+    });
+
+    // Drop target
+    ghostEl.addEventListener('dragover', (e) => {
+      if (!dragSrc) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      clearDropStyles();
+      ghostEl.classList.add('drop-before');
+    });
+    ghostEl.addEventListener('dragleave', (e) => {
+      if (!ghostEl.contains(e.relatedTarget)) ghostEl.classList.remove('drop-before', 'drop-after');
+    });
+    ghostEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragSrc) return;
+      const { si: srcSi, ti: srcTi } = dragSrc;
+      const [tile] = state.periods[srcSi].tiles.splice(srcTi, 1);
+      // append to target period
+      state.periods[si].tiles.push(tile);
+      dragSrc = null; clearDropStyles();
+      saveState(); animatedRender(220);
+    });
+
+    return ghostEl;
+  }
+
+  function renderPeriod(period, si) {
+    if (period.archived && !showArchived) return null;
+
+    const visibleTiles = hasActiveFilters()
+      ? period.tiles.filter(t => tileMatchesFilters(t, period.name, period.date))
+      : period.tiles;
+    if (hasActiveFilters() && visibleTiles.length === 0) return null;
+
+    const sec = el('section', 'period' + (period.archived ? ' archived' : ''));
+
+    sec.appendChild(buildPeriodHead(period, si));
 
     // Grid
     const g = el('div', 'g');
@@ -1518,121 +1765,175 @@
     }
 
     for (const gh of ghosts) {
-      const ghostEl = el('div', 'gh');
-      ghostEl.style.gridColumn = `${gh.col} / span 1`;
-      ghostEl.style.gridRow = `${gh.row} / span 1`;
-      ghostEl.dataset.si = si;
-      ghostEl.dataset.ghost = '1';
-
-      const plus = el('span'); plus.textContent = '+'; plus.setAttribute('aria-hidden', 'true');
-      ghostEl.setAttribute('role', 'button');
-      ghostEl.setAttribute('aria-label', 'Add tile');
-      ghostEl.setAttribute('tabindex', '0');
-      ghostEl.appendChild(plus);
-
-      addKeyClick(ghostEl);
-      ghostEl.addEventListener('click', () => {
-        const t = { id: uid(), colSpan: 1, rowSpan: 1, title: 'New task', description: '', status: 'Backlog', tag: '' };
-        period.tiles.push(t);
-        saveState(); animatedRender(200);
-        setTimeout(() => {
-          const titleEl = document.querySelector(`[data-tile="${t.id}"] .t`);
-          if (titleEl) { titleEl.focus(); selectAll(titleEl); }
-        }, 30);
-      });
-
-      // Drop target
-      ghostEl.addEventListener('dragover', (e) => {
-        if (!dragSrc) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
-        clearDropStyles();
-        ghostEl.classList.add('drop-before');
-      });
-      ghostEl.addEventListener('dragleave', (e) => {
-        if (!ghostEl.contains(e.relatedTarget)) ghostEl.classList.remove('drop-before', 'drop-after');
-      });
-      ghostEl.addEventListener('drop', (e) => {
-        e.preventDefault();
-        if (!dragSrc) return;
-        const { si: srcSi, ti: srcTi } = dragSrc;
-        const [tile] = state.periods[srcSi].tiles.splice(srcTi, 1);
-        // append to target period
-        state.periods[si].tiles.push(tile);
-        dragSrc = null; clearDropStyles();
-        saveState(); animatedRender(220);
-      });
-
-      g.appendChild(ghostEl);
+      g.appendChild(renderGhost(period, si, gh));
     }
 
     sec.appendChild(g);
     return sec;
   }
 
-  function renderCard(tile, period, si, p) {
-    const members = tile.taskGroupId ? taskGroupsCache.get(tile.taskGroupId) : null;
+  function renderGantt() {
+    taskGroupsCache = buildTaskGroups();
+    const app = document.getElementById('app');
+    app.innerHTML = '';
+
+    renderHeader(app);
+
+    // Collect visible periods + their visible tiles, in roadmap order.
+    const lanes = [];
+    state.periods.forEach((period, si) => {
+      if (period.archived && !showArchived) return;
+      const visibleTiles = hasActiveFilters()
+        ? period.tiles.filter(t => tileMatchesFilters(t, period.name, period.date))
+        : period.tiles;
+      if (hasActiveFilters() && visibleTiles.length === 0) return;
+      lanes.push({ period, si, tiles: visibleTiles });
+    });
+
+    if (lanes.length > 0) {
+      const scroller = el('div', 'gantt-scroll');
+
+      // Each lane gets a comfortable minimum width so a tile inside it stays
+      // legible (each lane has `cols` sub-columns, same as a bento period).
+      // Below this width the gantt scrolls horizontally — expected UX.
+      const minLanePx = window.innerWidth <= 640 ? 360 : window.innerWidth <= 1024 ? 480 : 600;
+      const minTotal = `${minLanePx * lanes.length}px`;
+
+      // Lane headers row — same period heads as bento, side by side.
+      const headerRow = el('div', 'gantt-lane-headers');
+      headerRow.style.gridTemplateColumns = `repeat(${lanes.length}, 1fr)`;
+      headerRow.style.minWidth = minTotal;
+      for (const lane of lanes) {
+        const wrap = el('div', 'gantt-lane-head' + (lane.period.archived ? ' archived' : ''));
+        wrap.appendChild(buildPeriodHead(lane.period, lane.si));
+        headerRow.appendChild(wrap);
+      }
+      scroller.appendChild(headerRow);
+
+      // Unified grid.
+      const layout = layoutGanttGrid(lanes, cols);
+      const grid = el('div', 'gantt-grid');
+      grid.style.gridTemplateColumns = `repeat(${layout.totalCols}, 1fr)`;
+      grid.style.minWidth = minTotal;
+
+      // Lane separators (decorative thin vertical rules at lane boundaries).
+      // Use grid-row: 1 / -1 spanning all rows; place between lanes.
+      const totalRowsForSep = Math.max(1, layout.totalRows + 1);
+      for (let i = 1; i < layout.numLanes; i++) {
+        const sep = el('div', 'gantt-lane-sep');
+        sep.style.gridColumn = `${i * cols + 1}`;
+        sep.style.gridRow = `1 / ${totalRowsForSep + 1}`;
+        grid.appendChild(sep);
+      }
+
+      // Singles (regular tiles inside a single period).
+      for (const p of layout.placements) {
+        const lane = lanes[p.lane];
+        grid.appendChild(renderCard(p.tile, lane.period, lane.si, p, { gridCols: layout.totalCols }));
+      }
+
+      // Group bars (single continuous bar across multiple lanes).
+      for (const bp of layout.groupPlacements) {
+        const leader = bp.members[0];
+        const leaderLane = lanes[bp.firstLane];
+        // Translate the layout members (with `lane` index) into the shape renderDots/openLinkPopup expect (`tile` + `periodIdx`).
+        const dotMembers = bp.members.map(m => ({ tile: m.tile, periodIdx: lanes[m.lane].si }));
+        grid.appendChild(renderCard(leader.tile, leaderLane.period, leaderLane.si, bp, {
+          isGroupBar: true,
+          members: dotMembers,
+          gridCols: layout.totalCols,
+        }));
+      }
+
+      // Ghosts (per-lane empty cells for adding new tiles).
+      for (const gh of layout.ghosts) {
+        const lane = lanes[gh.lane];
+        grid.appendChild(renderGhost(lane.period, lane.si, { row: gh.row, col: gh.col }));
+      }
+
+      scroller.appendChild(grid);
+      app.appendChild(scroller);
+    }
+
+    const addPeriodBtn = el('a', 'add-period-btn');
+    addPeriodBtn.textContent = '+ period';
+    addPeriodBtn.setAttribute('role', 'button');
+    addPeriodBtn.setAttribute('tabindex', '0');
+    addPeriodBtn.addEventListener('click', addPeriod);
+    addKeyClick(addPeriodBtn);
+    app.appendChild(addPeriodBtn);
+
+    requestAnimationFrame(checkDescriptionOverflow);
+  }
+
+  function renderCard(tile, period, si, p, opts) {
+    opts = opts || {};
+    const isGroupBar = !!opts.isGroupBar;
+    const gridCols = opts.gridCols || cols;
+    const members = opts.members || (tile.taskGroupId ? taskGroupsCache.get(tile.taskGroupId) : null);
     const currentIdx = members ? members.findIndex(m => m.tile.id === tile.id) : -1;
 
-    const card = el('div', 'c' + (STATUS_CLS[tile.status] || ''));
+    const card = el('div', 'c' + (STATUS_CLS[tile.status] || '') + (isGroupBar ? ' gantt-bar' : ''));
     card.dataset.tile = tile.id;
     card.dataset.si = si;
     card.style.gridColumn = `${p.col} / span ${p.w}`;
     card.style.gridRow = `${p.row} / span ${p.h}`;
-    card.draggable = true;
+    card.draggable = !isGroupBar;
     card.setAttribute('aria-label', tile.title);
 
-    // Drag events
-    card.addEventListener('dragstart', (e) => {
-      dragSrc = { si, ti: period.tiles.indexOf(tile) };
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', tile.id);
-      // slight delay so the ghost renders before opacity drops
-      setTimeout(() => card.classList.add('dragging'), 0);
-    });
+    if (!isGroupBar) {
+      // Drag events
+      card.addEventListener('dragstart', (e) => {
+        dragSrc = { si, ti: period.tiles.indexOf(tile) };
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', tile.id);
+        // slight delay so the ghost renders before opacity drops
+        setTimeout(() => card.classList.add('dragging'), 0);
+      });
 
-    card.addEventListener('dragend', () => {
-      dragSrc = null; clearDropStyles();
-    });
+      card.addEventListener('dragend', () => {
+        dragSrc = null; clearDropStyles();
+      });
 
-    card.addEventListener('dragover', (e) => {
-      if (!dragSrc) return;
-      if (dragSrc.si === si && dragSrc.ti === period.tiles.indexOf(tile)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-      clearDropStyles();
-      const rect = card.getBoundingClientRect();
-      const half = rect.left + rect.width / 2;
-      card.classList.add(e.clientX < half ? 'drop-before' : 'drop-after');
-    });
+      card.addEventListener('dragover', (e) => {
+        if (!dragSrc) return;
+        if (dragSrc.si === si && dragSrc.ti === period.tiles.indexOf(tile)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        clearDropStyles();
+        const rect = card.getBoundingClientRect();
+        const half = rect.left + rect.width / 2;
+        card.classList.add(e.clientX < half ? 'drop-before' : 'drop-after');
+      });
 
-    card.addEventListener('dragleave', (e) => {
-      if (!card.contains(e.relatedTarget)) card.classList.remove('drop-before', 'drop-after');
-    });
+      card.addEventListener('dragleave', (e) => {
+        if (!card.contains(e.relatedTarget)) card.classList.remove('drop-before', 'drop-after');
+      });
 
-    card.addEventListener('drop', (e) => {
-      e.preventDefault();
-      if (!dragSrc) return;
-      const { si: srcSi, ti: srcTi } = dragSrc;
-      const isBefore = card.classList.contains('drop-before');
+      card.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (!dragSrc) return;
+        const { si: srcSi, ti: srcTi } = dragSrc;
+        const isBefore = card.classList.contains('drop-before');
 
-      // Remove from source
-      const [movedTile] = state.periods[srcSi].tiles.splice(srcTi, 1);
+        // Remove from source
+        const [movedTile] = state.periods[srcSi].tiles.splice(srcTi, 1);
 
-      // Find current index of drop target (after splice, same period)
-      const targetTi = period.tiles.indexOf(tile);
-      let insertAt = isBefore ? targetTi : targetTi + 1;
-      insertAt = clamp(insertAt, 0, period.tiles.length);
+        // Find current index of drop target (after splice, same period)
+        const targetTi = period.tiles.indexOf(tile);
+        let insertAt = isBefore ? targetTi : targetTi + 1;
+        insertAt = clamp(insertAt, 0, period.tiles.length);
 
-      state.periods[si].tiles.splice(insertAt, 0, movedTile);
-      dragSrc = null; clearDropStyles();
-      saveState(); animatedRender(220);
-    });
+        state.periods[si].tiles.splice(insertAt, 0, movedTile);
+        dragSrc = null; clearDropStyles();
+        saveState(); animatedRender(220);
+      });
+    }
 
     // Delete
     const delB = el('span', 'del-btn'); delB.textContent = '×';
     delB.setAttribute('role', 'button');
-    delB.setAttribute('aria-label', 'Delete tile');
+    delB.setAttribute('aria-label', isGroupBar ? 'Delete this part of the task group' : 'Delete tile');
     delB.setAttribute('tabindex', '0');
     delB.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1700,19 +2001,22 @@
     makeEditable(tg, { onBlur: (text) => { tile.tag = text; saveState(); } });
     f.appendChild(tg);
 
-    // Resize handle
-    const rh = el('span', 'rh'); rh.textContent = '⤡';
-    rh.setAttribute('role', 'button');
-    rh.setAttribute('aria-label', 'Resize tile');
-    rh.setAttribute('tabindex', '0');
-    rh.addEventListener('mousedown', (e) => startResize(e, tile, card));
+    // Resize handle (disabled on group bars — width is derived from members' colSpans)
+    let rh = null;
+    if (!isGroupBar) {
+      rh = el('span', 'rh'); rh.textContent = '⤡';
+      rh.setAttribute('role', 'button');
+      rh.setAttribute('aria-label', 'Resize tile');
+      rh.setAttribute('tabindex', '0');
+      rh.addEventListener('mousedown', (e) => startResize(e, tile, card, gridCols));
+    }
 
-    const dotsEl = members?.length >= 2 ? renderDots(members, currentIdx) : null;
+    const dotsEl = members && members.length >= 2 ? renderDots(members, currentIdx) : null;
     if (dotsEl) {
       if (p.w > 1) f.appendChild(dotsEl);
       else { dotsEl.classList.add('dots-above'); card.classList.add('has-dots-above'); }
     }
-    card.append(delB, linkBtn, t, de, moreBtn, ...(dotsEl && p.w === 1 ? [dotsEl] : []), f, rh);
+    card.append(delB, linkBtn, t, de, moreBtn, ...(dotsEl && p.w === 1 ? [dotsEl] : []), f, ...(rh ? [rh] : []));
     return card;
   }
 
